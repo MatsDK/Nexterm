@@ -4,27 +4,25 @@
   "description": "",
   "main": "tcpServer.js",
   "dependencies": {
-    "axios": "^0.21.1",
-    "body-parser": "^1.19.0",
-    "cors": "^2.8.5",
-    "express": "^4.17.1",
     "next": "^10.0.8",
     "react": "^17.0.1",
-    "react-dom": "^17.0.1"
+    "react-dom": "^17.0.1",
+    "socket.io": "^4.4.1",
+    "socket.io-client": "^4.4.1",
+    "xterm": "^4.17.0"
   },
   "devDependencies": {
     "@types/express": "^4.17.11",
-    "@types/node": "^14.14.32",
+    "@types/node": "^17.0.16",
     "@types/react": "^17.0.3",
-    "nodemon": "^2.0.7",
-    "ts-node": "^9.1.1",
+    "ts-node-dev": "^1.1.8",
     "typescript": "^4.2.3"
   },
   "scripts": {
-    "dev": "nodemon ./server/server.ts",
-    "build": "next build && tsc --project tsconfig.server.json",
-    "postinstall": "npm run build",
-    "start": "node .next/production-server/server.js"
+    "dev": "next",
+    "start:server": "tsnd server/index.ts --watch --respawn",
+    "build": "next build",
+    "start": "next start"
   },
   "keywords": [],
   "author": "matsdekort <matsdekort257@gmail.com>",
