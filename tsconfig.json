@@ -12,8 +12,9 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "noEmit": true,
-    "noUnusedLocals": true,
+    "noUnusedLocals": false,
     "noImplicitAny": false,
+    "strictPropertyInitialization": false,
     // "noUnusedParameters": true,
     "preserveConstEnums": true,
     "pretty": true,
@@ -35,5 +36,5 @@
   ],
   "exclude": [
     "node_modules"
-  ]  
+  ]
 }

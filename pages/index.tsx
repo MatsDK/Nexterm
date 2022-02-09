@@ -6,7 +6,7 @@ const Index = (): JSX.Element => {
 
   useTerminal(ref, "1")
 
-  return <div ref={ref} />
+  return <div ref={ref} style={{ width: "100%" }} />
 };
 
 export default Index;
