@@ -3,11 +3,12 @@ import { Server, Socket } from "socket.io";
 import { Client } from "ssh2";
 
 interface AllowSSHObject {
-	port: number
-	ip: string
+	port?: number
+	host?: string
+	username?: string
 }
 
-type AllowedOption = Array<"SSH" | "local"> | { SSH: boolean | AllowSSHObject, local: boolean };
+type AllowedOption = Array<"SSH" | "local"> | { SSH: boolean | AllowSSHObject | AllowSSHObject[], local: boolean };
 
 interface TerminalServerOptions {
 	port?: number
@@ -32,11 +33,27 @@ interface CreateSessionProps {
 	size: { rows: number, cols: number }
 }
 
+
+interface SSHConnectProps {
+	password: string
+	username: string
+	port?: number
+	host: string
+}
+
+type DefaultStartTermProps = { size: { rows: number, cols: number }, id: string }
+
+type StartTermLocalProps = ({ type: "local" } & DefaultStartTermProps)
+type StartTermSSHProps = ({ type: "SSH" } & DefaultStartTermProps & SSHConnectProps)
+type StartTermProps = StartTermLocalProps | StartTermSSHProps
+
 export class TerminalServer {
 	#io: Server
 	#sessions: Map<string, TermSession>
+	allow: AllowedOption
 
-	constructor({ port, clientUrl }: TerminalServerOptions) {
+	constructor({ port, clientUrl, allow }: TerminalServerOptions) {
+		this.allow = allow
 		this.#sessions = new Map()
 
 		const server = createServer()
@@ -53,7 +70,8 @@ export class TerminalServer {
 
 	#handleConnection() {
 		return (socket: Socket) => {
-			socket.on("__start-term__", (d) => {
+			socket.on("__start-term__", (d: StartTermProps) => {
+				console.log(d)
 				if (!this.#sessions.has(d.id)) this.#createSession(d, socket)
 
 				this.#sessions.get(d.id)!.socket = socket
@@ -61,7 +79,8 @@ export class TerminalServer {
 		}
 	}
 
-	#createSession({ id, type, size, ...rest }: CreateSessionProps, socket: Socket): TermSession {
+	#createSession(props: StartTermProps, socket: Socket): TermSession | null {
+		const { id, type, size, ...rest } = props
 		const thisSession: TermSession = {
 			type,
 			socket
@@ -69,9 +88,14 @@ export class TerminalServer {
 		this.#sessions.set(id, thisSession);
 
 		if (type === "SSH") {
+			if (!this.#accessAllowedToConnect(props as StartTermSSHProps)) {
+				thisSession.socket.emit("__not-allowed__")
+				return null
+			}
+
 			const client = new Client()
 
-			const { host, password, username, port = 22 } = rest
+			const { host, password, username, port = 22 } = rest as StartTermSSHProps
 
 			client.on("timeout", () => thisSession.socket.emit("__error__", `Connection to ${username}@${host} timed out`))
 			client.on("error", (err) => thisSession.socket.emit("__error__", err.message));
@@ -100,6 +124,7 @@ export class TerminalServer {
 				})
 			})
 
+
 			client.connect({
 				username,
 				password,
@@ -111,5 +136,28 @@ export class TerminalServer {
 		}
 
 		return thisSession
+	}
+
+	#accessAllowedToConnect({ username, host, port = 22, type }: StartTermSSHProps): boolean {
+		if (!this.allow) return true
+
+		if (Array.isArray(this.allow)) return this.allow.includes(type)
+
+		if (!this.allow.SSH) return true
+		if (typeof this.allow.SSH === "boolean") return this.allow.SSH
+
+
+		const sshConnAllowed = (SSHObj: AllowSSHObject): boolean => {
+			if (SSHObj.username != null && username !== SSHObj.username) return false
+			if (SSHObj.port != null && port !== SSHObj.port) return false
+			if (SSHObj.host != null && host !== SSHObj.host) return false
+
+			return true
+		}
+
+		if (Array.isArray(this.allow.SSH)) return this.allow.SSH.some((v) => sshConnAllowed(v))
+
+
+		return sshConnAllowed(this.allow.SSH)
 	}
 }

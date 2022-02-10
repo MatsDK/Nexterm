@@ -3,19 +3,22 @@ import { Terminal } from "xterm";
 import { TerminalContext } from "./TerminalProvider";
 import { DraculaTheme, UbuntuTheme } from "./theme";
 
-
-interface StartTermProps {
-	id: string
-	type: "SSH" | "local"
+interface SSHConnectProps {
 	password: string
 	username: string
 	port?: number
 	host: string
-	size: { rows: number, cols: number }
 }
 
+type DefaultStartTermProps = { size: { rows: number, cols: number }, id: string }
 
-export const useTerminal = (ref: React.RefObject<HTMLDivElement>, id: string) => {
+type StartTermLocalProps = ({ type: "local" } & DefaultStartTermProps)
+type StartTermSSHProps = ({ type: "SSH" } & DefaultStartTermProps & SSHConnectProps)
+type StartTermProps = StartTermLocalProps | StartTermSSHProps
+
+type useTerminalProps = { type: "local" } | ({ type: "SSH" } & SSHConnectProps)
+
+export const useTerminal = (ref: React.RefObject<HTMLDivElement>, id: string, { type, ...props }: useTerminalProps) => {
 	const { socket } = useContext(TerminalContext)
 	const [terminal, setTerminal] = useState<Terminal | null>(null)
 
@@ -36,17 +39,21 @@ export const useTerminal = (ref: React.RefObject<HTMLDivElement>, id: string) =>
 			fitAddon.fit();
 
 			const { cols, rows } = term
-			const props: StartTermProps = {
+			const startTermProps: StartTermProps = type == "SSH" ? {
+				type,
 				id,
-				host: "192.168.0.164",
-				username: "pi",
-				type: "SSH",
+				host: (props as StartTermSSHProps).host,
+				username: (props as StartTermSSHProps).username,
+				password: (props as StartTermSSHProps).password,
+				port: (props as StartTermSSHProps).port,
+				size: { cols, rows }
+			} : {
+				type,
+				id,
 				size: { cols, rows }
 			}
 
-			console.log(props)
-
-			socket!.emit("__start-term__", props)
+			socket!.emit("__start-term__", startTermProps)
 			socket!.on("__data__", data => {
 				term.write(data)
 			})
