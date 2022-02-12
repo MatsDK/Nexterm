@@ -1,10 +1,11 @@
+import type { ClientChannel } from "ssh2";
 export interface AllowSSHObject {
 	port?: number
 	host?: string
 	username?: string
 }
 
-export type AllowedOption = Array<"SSH" | "local"> | { SSH: boolean | AllowSSHObject | AllowSSHObject[], local: boolean };
+export type AllowedOption = Array<"SSH" | "local"> | { SSH?: boolean | AllowSSHObject | AllowSSHObject[], local?: boolean };
 
 export interface TerminalServerOptions {
 	port?: number

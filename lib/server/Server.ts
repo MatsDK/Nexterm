@@ -91,24 +91,29 @@ export class TerminalServer {
 
 	#attachMethods(id: string, emitState: boolean = false) {
 		let { stream, socket, state } = this.#sessions.get(id)!
+		if (!stream || !socket) return null
 
 		stream!.on("exit", () => socket.emit("__closed__"))
 
 		socket.emit("__connected__")
 
-		socket.on("__data__", (d: string) => {
-			stream!.write(d.toString())
+		socket.on("__data__", ({ d, id: termId }) => {
+			if (id == termId) stream!.write(d.toString())
 		})
 
-		if (emitState) socket.emit("__data__", state)
+		if (emitState) socket.emit("__data__", { data: state, id })
+
+		socket.on("__resize__", ({ id: termId, rows, cols }) => {
+			if (id === termId) stream!.setWindow(rows, cols, 0, 0)
+		})
 
 		stream!.on("data", (d: string) => {
 			this.#sessions.get(id)!.state += (d.toString())
 
-			socket.emit("__data__", d.toString())
+			socket.emit("__data__", { data: d.toString(), id })
 		})
 
-		socket.on("disconnect", (_r) => {
+		socket.on("disconnect", (_r: string) => {
 			stream?.removeAllListeners("data")
 		})
 	}
@@ -118,9 +123,8 @@ export class TerminalServer {
 
 		if (Array.isArray(this.allow)) return this.allow.includes(type)
 
-		if (!this.allow.SSH) return true
+		if (!("SSH" in this.allow) || this.allow.SSH == undefined) return true
 		if (typeof this.allow.SSH === "boolean") return this.allow.SSH
-
 
 		const sshConnAllowed = (SSHObj: AllowSSHObject): boolean => {
 			if (SSHObj.username != null && username !== SSHObj.username) return false
