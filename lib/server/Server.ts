@@ -1,51 +1,7 @@
 import { createServer } from "http";
+import { TermSession, AllowedOption, TerminalServerOptions, StartTermProps, StartTermSSHProps, AllowSSHObject } from "lib/types";
 import { Server, Socket } from "socket.io";
 import { Client } from "ssh2";
-
-interface AllowSSHObject {
-	port?: number
-	host?: string
-	username?: string
-}
-
-type AllowedOption = Array<"SSH" | "local"> | { SSH: boolean | AllowSSHObject | AllowSSHObject[], local: boolean };
-
-interface TerminalServerOptions {
-	port?: number
-	allow: AllowedOption
-	clientUrl: string
-}
-
-type Type = "SSH" | "local"
-
-interface TermSession {
-	type: Type
-	socket: Socket
-}
-
-interface CreateSessionProps {
-	id: string
-	type: Type
-	password: string
-	username: string
-	port?: number
-	host: string
-	size: { rows: number, cols: number }
-}
-
-
-interface SSHConnectProps {
-	password: string
-	username: string
-	port?: number
-	host: string
-}
-
-type DefaultStartTermProps = { size: { rows: number, cols: number }, id: string }
-
-type StartTermLocalProps = ({ type: "local" } & DefaultStartTermProps)
-type StartTermSSHProps = ({ type: "SSH" } & DefaultStartTermProps & SSHConnectProps)
-type StartTermProps = StartTermLocalProps | StartTermSSHProps
 
 export class TerminalServer {
 	#io: Server
@@ -73,8 +29,10 @@ export class TerminalServer {
 			socket.on("__start-term__", (d: StartTermProps) => {
 				console.log(d)
 				if (!this.#sessions.has(d.id)) this.#createSession(d, socket)
-
-				this.#sessions.get(d.id)!.socket = socket
+				else {
+					this.#sessions.get(d.id)!.socket = socket
+					this.#attachMethods(d.id, true);
+				}
 			})
 		}
 	}
@@ -83,7 +41,9 @@ export class TerminalServer {
 		const { id, type, size, ...rest } = props
 		const thisSession: TermSession = {
 			type,
-			socket
+			socket,
+			state: "",
+			stream: null
 		}
 		this.#sessions.set(id, thisSession);
 
@@ -110,17 +70,8 @@ export class TerminalServer {
 						return
 					}
 
-					stream.on("exit", () => socket.emit("__closed__"))
-
-					socket.emit("__connected__")
-
-					socket.on("__data__", (d: string) => {
-						stream.write(d.toString())
-					})
-
-					stream.on("data", (d: string) => {
-						socket.emit("__data__", d.toString())
-					})
+					thisSession.stream = stream
+					this.#attachMethods(id)
 				})
 			})
 
@@ -136,6 +87,30 @@ export class TerminalServer {
 		}
 
 		return thisSession
+	}
+
+	#attachMethods(id: string, emitState: boolean = false) {
+		let { stream, socket, state } = this.#sessions.get(id)!
+
+		stream!.on("exit", () => socket.emit("__closed__"))
+
+		socket.emit("__connected__")
+
+		socket.on("__data__", (d: string) => {
+			stream!.write(d.toString())
+		})
+
+		if (emitState) socket.emit("__data__", state)
+
+		stream!.on("data", (d: string) => {
+			this.#sessions.get(id)!.state += (d.toString())
+
+			socket.emit("__data__", d.toString())
+		})
+
+		socket.on("disconnect", (_r) => {
+			stream?.removeAllListeners("data")
+		})
 	}
 
 	#accessAllowedToConnect({ username, host, port = 22, type }: StartTermSSHProps): boolean {
