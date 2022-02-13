@@ -1,7 +1,11 @@
 import { createServer } from "http";
-import { TermSession, AllowedOption, TerminalServerOptions, StartTermProps, StartTermSSHProps, AllowSSHObject } from "lib/types";
+import { TermSession, AllowedOption, TerminalServerOptions, StartTermProps, StartTermSSHProps, AllowSSHObject, StartTermLocalProps } from "lib/types";
 import { Server, Socket } from "socket.io";
 import { Client } from "ssh2";
+import os from "os";
+import { spawn } from "node-pty";
+
+const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
 
 export class TerminalServer {
 	#io: Server
@@ -27,54 +31,59 @@ export class TerminalServer {
 	#handleConnection() {
 		return (socket: Socket) => {
 			socket.on("__start-term__", (d: StartTermProps) => {
-				console.log(d)
 				if (!this.#sessions.has(d.id)) this.#createSession(d, socket)
 				else {
 					this.#sessions.get(d.id)!.socket = socket
-					this.#attachMethods(d.id, true);
+					this.#attachSSHMethods(d.id, true);
 				}
 			})
 		}
 	}
 
 	#createSession(props: StartTermProps, socket: Socket): TermSession | null {
-		const { id, type, size, ...rest } = props
+		const { id, type, closeOnDisconnect = false, size, ...rest } = props
 		const thisSession: TermSession = {
 			type,
 			socket,
 			state: "",
-			stream: null
+			stream: null,
+			client: null
 		}
 		this.#sessions.set(id, thisSession);
 
 		if (type === "SSH") {
-			if (!this.#accessAllowedToConnect(props as StartTermSSHProps)) {
+			if (!this.#accessAllowedToConnectSSH(props as StartTermSSHProps)) {
 				thisSession.socket.emit("__not-allowed__")
 				return null
 			}
 
 			const client = new Client()
+			thisSession.client = client
 
 			const { host, password, username, port = 22 } = rest as StartTermSSHProps
 
-			client.on("timeout", () => thisSession.socket.emit("__error__", `Connection to ${username}@${host} timed out`))
-			client.on("error", (err) => thisSession.socket.emit("__error__", err.message));
+			client.on("timeout", () => thisSession.socket.emit("__error__", { err: `Connection to ${username}@${host} timed out`, id }))
+			client.on("error", (err) => thisSession.socket.emit("__error__", { err: err.message, id }));
 
-			client.on("end", () => socket.emit("__closed__"))
-			client.on("close", () => socket.emit("__closed__"))
+			client.on("end", () => socket.emit("__closed__", { id }))
+			client.on("close", () => socket.emit("__closed__", { id }))
 
 			client.on("ready", () => {
 				client.shell(size, async (err, stream) => {
 					if (err) {
-						socket.emit("__error__", err.message)
+						socket.emit("__error__", { err: err.message, id })
 						return
 					}
 
 					thisSession.stream = stream
-					this.#attachMethods(id)
+					this.#attachSSHMethods(id)
 				})
 			})
 
+			if (closeOnDisconnect) socket.on("disconnect", () => {
+				client.end()
+				this.#sessions.delete(id)
+			})
 
 			client.connect({
 				username,
@@ -82,20 +91,43 @@ export class TerminalServer {
 				host,
 				port,
 			})
+		} else if (type == "local") {
+			if (!this.#accessAllowedToConnectLocal(props as StartTermLocalProps)) {
+				thisSession.socket.emit("__not-allowed__")
+				return null
+			}
 
-			console.log(id)
+			const ptyClient = spawn(shell, [], {
+				name: id,
+				cwd: "/",
+				env: process.env as any,
+				...size,
+			});
+
+			ptyClient.on("exit", () => {
+				socket.emit("__closed")
+			})
+
+			ptyClient.on('data', (data) => {
+				socket.emit("__data__", { id, data })
+			});
+
+			socket.on("__data__", ({ d, id: termId }) => {
+				if (id === termId) ptyClient.write(d)
+			})
+
 		}
 
 		return thisSession
 	}
 
-	#attachMethods(id: string, emitState: boolean = false) {
-		let { stream, socket, state } = this.#sessions.get(id)!
+	#attachSSHMethods(id: string, emitState: boolean = false) {
+		let { stream, socket, state, client } = this.#sessions.get(id)!
 		if (!stream || !socket) return null
 
-		stream!.on("exit", () => socket.emit("__closed__"))
+		stream!.on("exit", () => socket.emit("__closed__", { id }))
 
-		socket.emit("__connected__")
+		socket.emit("__connected__", { id })
 
 		socket.on("__data__", ({ d, id: termId }) => {
 			if (id == termId) stream!.write(d.toString())
@@ -113,12 +145,20 @@ export class TerminalServer {
 			socket.emit("__data__", { data: d.toString(), id })
 		})
 
+		socket.on("__close__", ({ id: termId }) => {
+			if (termId == id) {
+				client!.end()
+				this.#sessions.delete(id)
+				socket.emit("__closed__", { id })
+			}
+		})
+
 		socket.on("disconnect", (_r: string) => {
 			stream?.removeAllListeners("data")
 		})
 	}
 
-	#accessAllowedToConnect({ username, host, port = 22, type }: StartTermSSHProps): boolean {
+	#accessAllowedToConnectSSH({ username, host, port = 22, type }: StartTermSSHProps): boolean {
 		if (!this.allow) return true
 
 		if (Array.isArray(this.allow)) return this.allow.includes(type)
@@ -138,5 +178,14 @@ export class TerminalServer {
 
 
 		return sshConnAllowed(this.allow.SSH)
+	}
+
+	#accessAllowedToConnectLocal({ type }: StartTermLocalProps): boolean {
+		if (!this.allow) return true
+
+		if (Array.isArray(this.allow)) return this.allow.includes(type)
+
+		if (this.allow.local == null) return true
+		return this.allow.local
 	}
 }

@@ -5,6 +5,7 @@
   "main": "tcpServer.js",
   "dependencies": {
     "next": "^10.0.8",
+    "node-pty": "^0.10.1",
     "react": "^17.0.2",
     "react-dom": "^17.0.1",
     "socket.io": "^4.4.1",

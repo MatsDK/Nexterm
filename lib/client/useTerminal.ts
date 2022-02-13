@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef, useState } from "react";
+import React, { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import { TerminalContext } from "./TerminalProvider";
 import { DraculaTheme, FirefoxDevTheme, UbuntuTheme } from "./theme";
@@ -10,7 +10,7 @@ interface SSHConnectProps {
 	host: string
 }
 
-type DefaultStartTermProps = { size: { rows: number, cols: number }, id: string }
+type DefaultStartTermProps = { size: { rows: number, cols: number }, id: string, closeOnDisconnect?: boolean }
 
 type StartTermLocalProps = ({ type: "local" } & DefaultStartTermProps)
 type StartTermSSHProps = ({ type: "SSH" } & DefaultStartTermProps & SSHConnectProps)
@@ -19,12 +19,38 @@ type StartTermProps = StartTermLocalProps | StartTermSSHProps
 interface TerminalOptions {
 	fontSize?: number,
 	fontFamily?: string
+	closeOnDisconnect?: boolean
 }
 type useTerminalProps = TerminalOptions & ({ type: "local" } | ({ type: "SSH" } & SSHConnectProps))
 
-export const useTerminal = (ref: React.RefObject<HTMLDivElement>, id: string, { type, ...props }: useTerminalProps) => {
+interface useTerminalReturnProps {
+	close: () => void
+	closed: boolean
+	start: () => void
+}
+
+export const useTerminal = (ref: React.RefObject<HTMLDivElement>, id: string, { type, ...props }: useTerminalProps): useTerminalReturnProps => {
 	const { socket } = useContext(TerminalContext)
 	const [terminal, setTerminal] = useState<Terminal | null>(null)
+	const [closed, setClosed] = useState(true)
+
+	const getStartTermProps = (terminal: Terminal): StartTermProps | null => {
+		const { cols, rows } = terminal
+		return type == "SSH" ? {
+			type,
+			id,
+			host: (props as any).host,
+			username: (props as any).username,
+			password: (props as any).password,
+			port: (props as any).port,
+			size: { cols, rows },
+			closeOnDisconnect: props.closeOnDisconnect
+		} : {
+			type,
+			id,
+			size: { cols, rows }
+		}
+	}
 
 	useEffect(() => {
 		const initTerminal = async () => {
@@ -35,10 +61,8 @@ export const useTerminal = (ref: React.RefObject<HTMLDivElement>, id: string, { 
 				theme: FirefoxDevTheme,
 				fontFamily: props.fontFamily || "Hack",
 				fontSize: props.fontSize || 16
-
 			})
 			setTerminal(term)
-
 
 			const fitAddon = new FitAddon();
 			term.loadAddon(fitAddon);
@@ -46,21 +70,8 @@ export const useTerminal = (ref: React.RefObject<HTMLDivElement>, id: string, { 
 			term.open(ref.current!)
 			fitAddon.fit();
 
-			const { cols, rows } = term
-			const startTermProps: StartTermProps = type == "SSH" ? {
-				type,
-				id,
-				host: (props as any).host,
-				username: (props as any).username,
-				password: (props as any).password,
-				port: (props as any).port,
-				size: { cols, rows }
-			} : {
-				type,
-				id,
-				size: { cols, rows }
-			}
-
+			const startTermProps = getStartTermProps(term)
+			if (!startTermProps) return
 
 			socket!.emit("__start-term__", startTermProps)
 			socket!.on("__data__", ({ data, id }) => {
@@ -70,12 +81,24 @@ export const useTerminal = (ref: React.RefObject<HTMLDivElement>, id: string, { 
 				}
 			})
 
-			socket!.on("__error__", err => {
-				console.log(err)
+			socket!.on("__connected__", ({ id: termId }) => {
+				if (id === termId) setClosed(false)
 			})
 
-			socket!.on("__closed__", () => {
-				console.log("connected closed")
+			socket!.on("__error__", ({ err, id: termId }) => {
+				if (id == termId)
+					console.log(err)
+			})
+
+			socket!.on("__closed__", ({ id: termId }) => {
+				if (id === termId) {
+					setClosed(true)
+					console.log("connected closed")
+				}
+			})
+
+			socket?.on("__not-allowed__", ({ id: termId }) => {
+				if (termId === id) console.log("Access not allowed")
 			})
 
 			term.onData((d) => {
@@ -97,4 +120,21 @@ export const useTerminal = (ref: React.RefObject<HTMLDivElement>, id: string, { 
 			socket?.removeAllListeners()
 		}
 	}, [ref, socket])
+
+	const close = useCallback(() => {
+		socket?.emit("__close__", { id })
+		setClosed(true)
+	}, [socket])
+
+	const start = useCallback(() => {
+		if (!closed || !terminal) return
+
+		const startTermProps = getStartTermProps(terminal)
+		if (!startTermProps) return
+
+		socket?.emit("__start-term__", startTermProps)
+		terminal.clear()
+	}, [socket, terminal])
+
+	return { close, closed, start }
 }

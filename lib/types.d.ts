@@ -1,4 +1,4 @@
-import type { ClientChannel } from "ssh2";
+import type { Client, ClientChannel } from "ssh2";
 export interface AllowSSHObject {
 	port?: number
 	host?: string
@@ -19,6 +19,7 @@ export interface TermSession {
 	type: Type
 	socket: Socket
 	stream: ClientChannel | null
+	client: Client | null
 	state: string
 }
 
@@ -30,7 +31,7 @@ export interface SSHConnectProps {
 }
 
 export type Size = { rows: number, cols: number }
-export type DefaultStartTermProps = { size: Size, id: string }
+export type DefaultStartTermProps = { size: Size, id: string, closeOnDisconnect?: boolean }
 
 export type StartTermLocalProps = ({ type: "local" } & DefaultStartTermProps)
 export type StartTermSSHProps = ({ type: "SSH" } & DefaultStartTermProps & SSHConnectProps)
