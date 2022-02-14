@@ -33,8 +33,12 @@ export class TerminalServer {
 			socket.on("__start-term__", (d: StartTermProps) => {
 				if (!this.#sessions.has(d.id)) this.#createSession(d, socket)
 				else {
-					this.#sessions.get(d.id)!.socket = socket
-					this.#attachSSHMethods(d.id, true);
+					const session = this.#sessions.get(d.id)!
+					session.socket = socket
+					if (session.type == "SSH")
+						this.#attachSSHMethods(d.id, true);
+					else
+						this.#attachPtyMethods(d.id, true)
 				}
 			})
 		}
@@ -47,7 +51,8 @@ export class TerminalServer {
 			socket,
 			state: "",
 			stream: null,
-			client: null
+			client: null,
+			ptyClient: null
 		}
 		this.#sessions.set(id, thisSession);
 
@@ -104,21 +109,45 @@ export class TerminalServer {
 				...size,
 			});
 
-			ptyClient.on("exit", () => {
-				socket.emit("__closed")
-			})
-
-			ptyClient.on('data', (data) => {
-				socket.emit("__data__", { id, data })
-			});
-
-			socket.on("__data__", ({ d, id: termId }) => {
-				if (id === termId) ptyClient.write(d)
-			})
+			thisSession.ptyClient = ptyClient
+			this.#attachPtyMethods(id)
 
 		}
 
 		return thisSession
+	}
+
+	#attachPtyMethods(id: string, emitState: boolean = false) {
+		let { ptyClient, socket, state } = this.#sessions.get(id)!
+		if (!ptyClient || !socket) return null
+
+		ptyClient.on("exit", () => {
+			socket.emit("__closed")
+		})
+
+		if (emitState) socket.emit("__data__", { data: state, id })
+
+		ptyClient.on('data', (data) => {
+			this.#sessions.get(id)!.state += (data.toString())
+			socket.emit("__data__", { id, data })
+		});
+
+		socket.on("__data__", ({ d, id: termId }) => {
+			if (id === termId) ptyClient?.write(d)
+		})
+
+		socket.on("__resize__", ({ id: termId, rows, cols }) => {
+			if (id === termId) ptyClient?.resize(cols, rows)
+		})
+
+		socket.on("__close__", ({ id: termId }) => {
+			if (termId == id) {
+				ptyClient?.kill()
+				this.#sessions.delete(id)
+				socket.emit("__closed__", { id })
+			}
+		})
+
 	}
 
 	#attachSSHMethods(id: string, emitState: boolean = false) {

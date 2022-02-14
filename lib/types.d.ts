@@ -1,3 +1,4 @@
+import { IPty } from "node-pty";
 import type { Client, ClientChannel } from "ssh2";
 export interface AllowSSHObject {
 	port?: number
@@ -18,6 +19,7 @@ export type Type = "SSH" | "local"
 export interface TermSession {
 	type: Type
 	socket: Socket
+	ptyClient: IPty | null
 	stream: ClientChannel | null
 	client: Client | null
 	state: string
