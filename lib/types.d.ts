@@ -18,7 +18,7 @@ export type Type = "SSH" | "local"
 
 export interface TermSession {
 	type: Type
-	socket: Socket
+	socket: Socket | null
 	ptyClient: IPty | null
 	stream: ClientChannel | null
 	client: Client | null

@@ -33,12 +33,17 @@ export class TerminalServer {
 			socket.on("__start-term__", (d: StartTermProps) => {
 				if (!this.#sessions.has(d.id)) this.#createSession(d, socket)
 				else {
-					const session = this.#sessions.get(d.id)!
+					const session = this.#sessions.get(d.id)!,
+						socketAttached = !session.socket
+
 					session.socket = socket
-					if (session.type == "SSH")
-						this.#attachSSHMethods(d.id, true);
-					else
-						this.#attachPtyMethods(d.id, true)
+
+					if (socketAttached) {
+						if (session.type == "SSH")
+							this.#attachSSHMethods(d.id, true);
+						else
+							this.#attachPtyMethods(d.id, true)
+					}
 				}
 			})
 		}
@@ -80,15 +85,22 @@ export class TerminalServer {
 						return
 					}
 
+					socket.on("disconnect", (_r: string) => {
+						this.#sessions.get(id)!.socket = null;
+						stream?.removeAllListeners("data")
+
+
+						if (closeOnDisconnect) {
+							client.end()
+							this.#sessions.delete(id)
+						}
+					})
+
 					thisSession.stream = stream
 					this.#attachSSHMethods(id)
 				})
 			})
 
-			if (closeOnDisconnect) socket.on("disconnect", () => {
-				client.end()
-				this.#sessions.delete(id)
-			})
 
 			client.connect({
 				username,
@@ -125,10 +137,12 @@ export class TerminalServer {
 			socket.emit("__closed")
 		})
 
+		socket.emit("__closed__", { id })
+
 		if (emitState) socket.emit("__data__", { data: state, id })
 
 		ptyClient.on('data', (data) => {
-			this.#sessions.get(id)!.state += (data.toString())
+			this.#sessions.get(id)!.state += data.toString()
 			socket.emit("__data__", { id, data })
 		});
 
@@ -146,6 +160,10 @@ export class TerminalServer {
 				this.#sessions.delete(id)
 				socket.emit("__closed__", { id })
 			}
+		})
+
+		socket.on("disconnect", () => {
+			this.#sessions.get(id)!.socket = null;
 		})
 
 	}
@@ -169,7 +187,7 @@ export class TerminalServer {
 		})
 
 		stream!.on("data", (d: string) => {
-			this.#sessions.get(id)!.state += (d.toString())
+			this.#sessions.get(id)!.state += d.toString()
 
 			socket.emit("__data__", { data: d.toString(), id })
 		})
@@ -182,9 +200,6 @@ export class TerminalServer {
 			}
 		})
 
-		socket.on("disconnect", (_r: string) => {
-			stream?.removeAllListeners("data")
-		})
 	}
 
 	#accessAllowedToConnectSSH({ username, host, port = 22, type }: StartTermSSHProps): boolean {
